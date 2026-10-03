@@ -1,0 +1,10 @@
+tower_round 0.0626
+tower_square 0.1458
+spire 0.2247
+keep 0.3285
+rotunda 0.4516
+hall 0.5765
+stupa 0.6784
+shrine_tower 0.7537
+temple 0.8439
+obelisk 0.9215
