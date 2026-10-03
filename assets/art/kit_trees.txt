@@ -1,0 +1,6 @@
+broad_green 0.1121
+broad_green_b 0.2991
+broad_yellow 0.4860
+broad_orange 0.6729
+cypress 0.8178
+bush 0.9065
