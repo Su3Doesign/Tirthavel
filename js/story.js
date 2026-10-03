@@ -31,11 +31,16 @@ try {
   loaderEl?.classList.add('done');
   throw e;
 }
-renderer.setPixelRatio(Math.min(devicePixelRatio, LITE ? 1 : 1.5));
+// resolution adapts to the machine: starts modest, drops if frames run slow, climbs back when there's headroom
+const DPR_CAP = LITE ? Math.min(devicePixelRatio, 1) : Math.min(devicePixelRatio, 1.25);
+let dpr = DPR_CAP;
+renderer.setPixelRatio(dpr);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.5;
 renderer.shadowMap.enabled = !LITE;
 renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.autoUpdate = false;          // re-rendered only when the sun actually moves
+renderer.shadowMap.needsUpdate = true;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(35, 1, 1, 40000);
@@ -106,7 +111,7 @@ const T = {
   rip: tex('water_normal.jpg', false), foam: tex('water_color.jpg', false),
 };
 
-// moss grows on whatever faces the sky, in patches (same rule as the Blender/Unreal materials)
+// moss grows on whatever faces the sky, in patches
 function mossify(mat, amount) {
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.mossMap = { value: T.moss };
@@ -151,8 +156,8 @@ const MAT = {
   leaf_ivy: new THREE.MeshStandardMaterial({ map: T.ivy, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.75,
     emissive: 0x24360d, emissiveMap: T.ivy, emissiveIntensity: 0.25 }),
 };
-const OCC_BLACK = new THREE.MeshBasicMaterial({ color: 0x000000 });
-const OCC_LEAF = (map) => new THREE.MeshBasicMaterial({ color: 0x000000, map, alphaTest: 0.45, side: THREE.DoubleSide });
+const OCC_BLACK = new THREE.MeshBasicMaterial({ color: 0x000000, fog: false });
+const OCC_LEAF = (map) => new THREE.MeshBasicMaterial({ color: 0x000000, map, alphaTest: 0.45, side: THREE.DoubleSide, fog: false });
 
 // ---------------------------------------------------------------- the sea
 const SEA_Y = -130;
@@ -255,17 +260,18 @@ function ready() {
   setTimeout(() => loaderEl?.classList.add('done'), 350);
 }
 
+const gateMeshes = [];
 gltfLoader.load('assets/model/gate.glb', (g) => {
   g.scene.traverse((o) => {
     if (!o.isMesh) return;
     const key = o.name.replace(/[._]\d+$/, '');
     const m = MAT[key] || MAT.stone;
     o.material = m;
-    o.castShadow = !LITE;
+    o.castShadow = !LITE && !m.alphaTest;        // stone casts; leaves only receive (alpha-tested shadows cost the most)
     o.receiveShadow = !LITE;
     o.userData.mat = m;
     o.userData.occ = m.map && m.alphaTest ? OCC_LEAF(m.map) : OCC_BLACK;
-    if (m.alphaTest) o.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: m.map, alphaTest: 0.45 });
+    gateMeshes.push(o);
   });
   gateRoot.add(g.scene);
   modelReady = true;
@@ -280,11 +286,11 @@ sunDisc.visible = false;
 scene.add(sunDisc);
 const raysQuad = new FullScreenQuad(new THREE.ShaderMaterial({
   uniforms: { tOcc: { value: occRT.texture }, uSun: { value: new THREE.Vector2(0.5, 0.5) },
-    uDensity: { value: 0.9 }, uDecay: { value: 0.962 }, uWeight: { value: 0.04 }, uExposure: { value: 1.0 } },
+    uDensity: { value: 0.9 }, uDecay: { value: 0.952 }, uWeight: { value: 0.058 }, uExposure: { value: 1.0 } },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
   fragmentShader: `uniform sampler2D tOcc; uniform vec2 uSun; uniform float uDensity, uDecay, uWeight, uExposure; varying vec2 vUv;
-    void main(){ vec2 uv = vUv; vec2 dl = (uv - uSun) * (uDensity / 72.0); float il = 1.0; vec3 c = vec3(0.0);
-      for (int i = 0; i < 72; i++) { uv -= dl; c += texture2D(tOcc, uv).rgb * il * uWeight; il *= uDecay; }
+    void main(){ vec2 uv = vUv; vec2 dl = (uv - uSun) * (uDensity / 44.0); float il = 1.0; vec3 c = vec3(0.0);
+      for (int i = 0; i < 44; i++) { uv -= dl; c += texture2D(tOcc, uv).rgb * il * uWeight; il *= uDecay; }
       gl_FragColor = vec4(c * uExposure, 1.0); }`,
 }));
 const RayCombine = {
@@ -307,26 +313,27 @@ if (!LITE) {
   composer.addPass(new OutputPass());
 }
 
+const BLACK = new THREE.Color(0x000000);
+const sunNdc = new THREE.Vector3();
+// returns true when the shafts are worth drawing this frame
+function raysVisible() {
+  sunNdc.copy(sunDisc.position).project(camera);
+  return RAY_I > 0.02 && sunNdc.z < 1 && Math.abs(sunNdc.x) < 1.6 && Math.abs(sunNdc.y) < 1.6;
+}
 function renderRays() {
-  const sp = sunDisc.position.clone().project(camera);
-  const onScreen = sp.z < 1 && Math.abs(sp.x) < 1.6 && Math.abs(sp.y) < 1.6;
-  rayPass.uniforms.uI.value = onScreen ? RAY_I : 0;
-  if (!onScreen) return;
-  raysQuad.material.uniforms.uSun.value.set(sp.x * 0.5 + 0.5, sp.y * 0.5 + 0.5);
-  const keep = { bg: scene.background, fog: scene.fog };
+  rayPass.uniforms.uI.value = RAY_I;
+  raysQuad.material.uniforms.uSun.value.set(sunNdc.x * 0.5 + 0.5, sunNdc.y * 0.5 + 0.5);
+  const bg = scene.background;
   sky.visible = sea.visible = door.visible = corona.visible = false;
   sunDisc.visible = true;
-  moon.material.color.setRGB(0, 0, 0);
-  scene.background = new THREE.Color(0x000000);
-  scene.fog = null;
-  gateRoot.traverse((o) => { if (o.isMesh) o.material = o.userData.occ; });
+  scene.background = BLACK;
+  for (const o of gateMeshes) o.material = o.userData.occ;
   renderer.setRenderTarget(occRT);
   renderer.render(scene, camera);
-  gateRoot.traverse((o) => { if (o.isMesh) o.material = o.userData.mat; });
+  for (const o of gateMeshes) o.material = o.userData.mat;
   sky.visible = sea.visible = door.visible = corona.visible = true;
   sunDisc.visible = false;
-  scene.background = keep.bg;
-  scene.fog = keep.fog;
+  scene.background = bg;
   renderer.setRenderTarget(raysRT);
   raysQuad.render(renderer);
   renderer.setRenderTarget(null);
@@ -362,7 +369,7 @@ function keyParam(p) {
 const band = (p, a, b, f = 0.04) => THREE.MathUtils.clamp(Math.min((p - a) / f, (b - p) / f), 0, 1);
 
 // the sun crosses the sky over the Ring: rises behind it (-z), noon overhead, sets in front (+z)
-const AXIS_DIR = new THREE.Vector3();
+const AXIS_DIR = new THREE.Vector3(), MOON_OFF = new THREE.Vector3();
 let RAY_I = 1;
 function dayAt(p) {
   const th = THREE.MathUtils.clamp(p / 0.8, 0, 1) * Math.PI;
@@ -371,8 +378,7 @@ function dayAt(p) {
   const ecl = ease(THREE.MathUtils.clamp((p - 0.8) / 0.12, 0, 1));
   AXIS_DIR.set(0, 62, 0).sub(camera.position).normalize();
   if (ecl > 0) sunDir.lerp(AXIS_DIR, ecl).normalize();
-  const offset = new THREE.Vector3(0.06, 0.035, 0).multiplyScalar(1 - ecl);
-  moonDir.copy(sunDir).add(offset).normalize();
+  moonDir.copy(sunDir).add(MOON_OFF.set(0.06, 0.035, 0).multiplyScalar(1 - ecl)).normalize();
   const elev = Math.max(sunDir.y, 0);
   const warm = 1 - THREE.MathUtils.smoothstep(elev, 0.05, 0.6);
   sun.color.setRGB(1, 0.72 + 0.26 * (1 - warm), 0.45 + 0.5 * (1 - warm));
@@ -401,14 +407,15 @@ function readScroll() {
 }
 function resize() {
   const w = innerWidth, h = innerHeight;
+  renderer.setPixelRatio(dpr);
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  const pr = renderer.getPixelRatio();
-  occRT.setSize(Math.round(w * pr / 2), Math.round(h * pr / 2));
-  raysRT.setSize(Math.round(w * pr / 2), Math.round(h * pr / 2));
+  const qw = Math.max(1, Math.round(w * dpr / 4)), qh = Math.max(1, Math.round(h * dpr / 4));
+  occRT.setSize(qw, qh);
+  raysRT.setSize(qw, qh);
+  composer?.setPixelRatio(dpr);
   composer?.setSize(w, h);
-  bloom?.setSize(w, h);
 }
 addEventListener('resize', resize);
 resize();
@@ -417,21 +424,37 @@ const T0 = performance.now();
 let running = true;
 new IntersectionObserver(([e]) => { running = e.isIntersecting; }, { rootMargin: '200px' }).observe(storyEl);
 
-let frames = 0;
-function frame() {
+let frames = 0, lastT = 0, slow = 0, fast = 0, ema = 16, lastMove = 0, tick = 0;
+const lastShadowSun = new THREE.Vector3(9, 9, 9);
+let shadowWait = 0;
+const beatOp = beats.map(() => -1);
+let lastStoryVar = '';
+function frame(now) {
   if (STATIC && loaded && frames > 3) { document.documentElement.dataset.rendered = '1'; return; }
   requestAnimationFrame(frame);
-  if (!running) return;
-  if (loaded) frames++;
-  const t = (performance.now() - T0) / 1000;
+  if (!running) { lastT = 0; return; }
+  now = now || performance.now();
   pTarget = readScroll();
+  const moving = Math.abs(pTarget - pShown) > 0.0004;
+  if (moving) lastMove = now;
+  // nothing moving for a while: the sea can breathe at 30 fps
+  if (!moving && now - lastMove > 1200 && (tick++ & 1)) return;
+  if (loaded) frames++;
+  // adaptive resolution
+  if (lastT && !STATIC && loaded) {
+    ema = ema * 0.92 + Math.min(100, now - lastT) * 0.08;
+    if (ema > 23) { fast = 0; if (++slow > 40 && dpr > 0.6) { dpr = Math.max(0.6, +(dpr - 0.15).toFixed(2)); slow = 0; resize(); } }
+    else if (ema < 14.5) { slow = 0; if (++fast > 240 && dpr < DPR_CAP) { dpr = Math.min(DPR_CAP, +(dpr + 0.1).toFixed(2)); fast = 0; resize(); } }
+    else { slow = Math.max(0, slow - 1); fast = 0; }
+  }
+  lastT = now;
+  const t = (now - T0) / 1000;
   pShown += (pTarget - pShown) * (FORCE_P !== null ? 1 : 0.075);
   const p = pShown;
   const { u, fov } = keyParam(p);
   camera.position.copy(camCurve.getPoint(u));          // by keyframe, not arc length: holds on each beat
   camera.lookAt(tgtCurve.getPoint(u));
-  camera.fov = fov;
-  camera.updateProjectionMatrix();
+  if (camera.fov !== fov) { camera.fov = fov; camera.updateProjectionMatrix(); }
   dayAt(p);
   sun.position.copy(sunDir).multiplyScalar(500).add(sun.target.position);
   sunDisc.position.copy(sunDir).multiplyScalar(6000).add(camera.position);
@@ -445,10 +468,29 @@ function frame() {
   corona.material.uniforms.uTime.value = t;
   doorMat.uniforms.uTime.value = t;
   SU.time.value = t;
-  if (loaded) updateEnv();
-  for (const b of beats) b.style.opacity = band(p, +b.dataset.a, +b.dataset.b, 0.035).toFixed(3);
-  document.documentElement.style.setProperty('--story', p.toFixed(4));
-  if (composer) { renderRays(); composer.render(); } else renderer.render(scene, camera);
+  // shadows and the sky reflection are the expensive bits: only when the sun has really moved
+  if (renderer.shadowMap.enabled && ++shadowWait >= 3 && sunDir.distanceToSquared(lastShadowSun) > 0.00002) {
+    renderer.shadowMap.needsUpdate = true;
+    lastShadowSun.copy(sunDir);
+    shadowWait = 0;
+  }
+  if (loaded && now - lastMove > 350) updateEnv();
+  for (let i = 0; i < beats.length; i++) {
+    const o = +band(p, +beats[i].dataset.a, +beats[i].dataset.b, 0.035).toFixed(3);
+    if (o !== beatOp[i]) { beats[i].style.opacity = o; beatOp[i] = o; }
+  }
+  const sv = p.toFixed(3);
+  if (sv !== lastStoryVar) { storyEl.style.setProperty('--story', sv); lastStoryVar = sv; }
+  const wantRays = composer && raysVisible();
+  const wantBloom = composer && p > 0.74;
+  if (wantRays || wantBloom) {
+    if (wantRays) renderRays(); else rayPass.uniforms.uI.value = 0;
+    rayPass.enabled = !!wantRays;
+    bloom.enabled = !!wantBloom;
+    composer.render();
+  } else {
+    renderer.render(scene, camera);
+  }
 }
-frame();
-window.__ringStory = { setP: (v) => { pTarget = pShown = v; } };
+requestAnimationFrame(frame);
+window.__ringStory = { setP: (v) => { pTarget = pShown = v; }, get dpr() { return dpr; } };

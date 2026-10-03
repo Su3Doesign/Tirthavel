@@ -4,10 +4,10 @@
 
 **[Open the book →](https://su3doesign.github.io/Tirthavel/)**
 
-A concept-art book as a website: the world-building sketchbook behind **Kaalavalaya**, a 156-metre stone ring with a door no one may enter, and **Tirthavel**, the drowned city that climbs toward it.
+A concept-art book as a website: the world-building sketchbook behind **Kaalavalaya**, a 156-metre stone ring whose door shows you what you want most and takes your shadow, and **Tirthavel**, the drowned city that climbs toward it.
 
 - A scroll-driven three.js story built on the real gate mesh: one day passes over the Ring, from dawn to the Hollow Sun.
-- Chapters on origins and lore, why a ring, the Mahabharata echoes behind it, the gate, the citadel, materials, the sea, light and the making-of, with hand-drawn annotations throughout.
+- Chapters on origins and lore, why a ring, the Mahabharata echoes behind it, the gate, the city, materials, the sea, light and the making-of, with hand-drawn annotations throughout.
 - A 3D turntable of the gate in clay, ink, stone and overgrown looks.
 
 ## Run it locally
@@ -49,4 +49,4 @@ Shared links show the same card, because the page sets `og:image` and `twitter:i
 
 Concept, world-building, renders, sketches and writing by Sumanth, 2026. All rights reserved.
 
-The world was built procedurally in Blender (Python, Cycles) and rendered in Unreal Engine 5. The four found images that started the mood board aren't reproduced here, only sketched. The open-source libraries and fonts the site bundles are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Modelled in Blender and rendered in Unreal Engine 5. The four found images that started the mood board aren't reproduced here, only sketched. The open-source libraries and fonts the site bundles are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

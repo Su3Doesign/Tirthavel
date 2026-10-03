@@ -47,7 +47,7 @@
   --story: 0;
 }
 * { box-sizing: border-box; }
-html { scroll-behavior: auto; }
+html { scroll-behavior: auto; overflow-x: hidden; overflow-x: clip; }
 body {
   margin: 0;
   background: var(--paper) url(../assets/ui/paper.jpg) repeat;
@@ -56,8 +56,9 @@ body {
   font: 400 1.22rem/1.55 var(--serif);
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
+  overflow-x: clip;
 }
-img { max-width: 100%; display: block; }
+img { max-width: 100%; height: auto; display: block; }
 a { color: var(--pen); }
 ::selection { background: rgba(184, 138, 62, .35); }
 
@@ -78,9 +79,10 @@ a { color: var(--pen); }
 /* ------------------------------------------------------------------ ring nav */
 .ringnav {
   position: fixed; top: 18px; right: 20px; z-index: 40; display: flex; align-items: center; gap: .6rem;
-  font: 600 .72rem var(--caps); letter-spacing: .22em; color: var(--bone); mix-blend-mode: difference;
-  cursor: pointer; user-select: none; background: none; border: 0; padding: 0;
+  font: 600 .72rem var(--caps); letter-spacing: .22em; color: var(--ink);
+  cursor: pointer; user-select: none; background: none; border: 0; padding: 0; transition: color .4s;
 }
+body.on-dark .ringnav, body.bottom-dark .sound { color: var(--bone); }
 .ringnav svg { width: 42px; height: 42px; }
 .ringnav circle { fill: none; stroke: currentColor; stroke-width: 3; }
 .ringnav .track { opacity: .3; }
@@ -98,12 +100,13 @@ a { color: var(--pen); }
 .toc-drawer .note { margin-top: 1.4rem; }
 
 /* ------------------------------------------------------------------ story */
-#story { position: relative; height: 1100vh; background: #120f0c; }
+#story { position: relative; height: 820vh; background: #120f0c; }
 .stage { position: sticky; top: 0; height: 100vh; overflow: hidden; }
 #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .stage::after { content: ""; position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(ellipse at center, transparent 55%, rgba(10,6,2,.55) 100%); }
 .beat {
+  will-change: opacity;
   position: absolute; left: 7vw; bottom: 14vh; max-width: min(560px, 84vw); z-index: 2; opacity: 0;
   color: #fbf3e2; text-shadow: 0 2px 30px rgba(0,0,0,.55), 0 1px 2px rgba(0,0,0,.6); pointer-events: none;
 }
@@ -232,7 +235,7 @@ figure { margin: 0; position: relative; }
 .scripture .dropcap::first-letter { float: left; font: 600 4.2rem/0.8 var(--caps); color: var(--red); padding: .35rem .5rem 0 0; }
 .scripture .deva { font: 700 1.2em var(--hand); color: var(--red); white-space: nowrap; }
 
-.fullbleed { width: 100vw; margin-left: calc(50% - 50vw); position: relative; }
+.fullbleed { width: 100%; position: relative; overflow: hidden; }
 .fullbleed img { width: 100%; height: auto; }
 .fullbleed .overlay { position: absolute; inset: auto 0 0 0; padding: 4rem 6vw 3rem; color: #fff4e0;
   background: linear-gradient(transparent, rgba(10,6,3,.72)); }
@@ -288,9 +291,12 @@ figure { margin: 0; position: relative; }
 .timeline .when { font: 600 .7rem var(--caps); letter-spacing: .25em; color: var(--gold); background: var(--paper); position: relative;
   display: inline-block; padding: .2rem .6rem .2rem 0; margin-bottom: 1.2rem; }
 
-.gallery figure { margin: 0 0 clamp(1.4rem, 3vw, 2.6rem); }
-.gallery .caption { text-align: right; }
-.triptych { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+.gallery { padding: 0 0 8vh; background: #161412 url(../assets/ui/paper_night.jpg); background-size: 700px; }
+.gallery figure { margin: 0; }
+.gallery .wide img { width: 100%; height: auto; }
+.gallery .caption { text-align: right; color: #cbbd9f; padding: .7rem clamp(1rem, 4vw, 3rem) clamp(1.6rem, 4vw, 3.2rem); margin: 0; }
+.triptych { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; padding: 0 clamp(1rem, 4vw, 3rem); }
+.triptych .caption { padding: .7rem 0 2rem; }
 @media (max-width: 860px) { .triptych { grid-template-columns: 1fr; } }
 
 .kit { position: relative; }
@@ -391,20 +397,6 @@ html:not(.js) .echo-nav, html:not(.js) .echo-hint { display: none; }
 .lexicon .i { font: italic 500 1.2rem var(--serif); }
 .lexicon p { margin: .1rem 0 0; font: 400 1.05rem/1.35 var(--hand); color: var(--pen); }
 
-/* ------------------------------------------------------------------ lore line */
-.lore { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(200px, 1fr); gap: 1.2rem;
-  overflow-x: auto; scroll-snap-type: x mandatory; padding: 1rem .2rem 1.6rem; margin-top: 2rem; scrollbar-width: thin; }
-.lore::before { content: ""; position: absolute; left: 0; right: 0; top: 112px; border-top: 2px dashed var(--pencil); opacity: .45; min-width: 100%; }
-.lore > div { scroll-snap-align: start; position: relative; }
-.lore { -webkit-mask: linear-gradient(90deg, #000 82%, transparent); mask: linear-gradient(90deg, #000 82%, transparent); cursor: grab; user-select: none; }
-.lore.end { -webkit-mask: none; mask: none; }
-.lore svg { width: 100%; max-width: 190px; height: 104px; display: block; overflow: visible; }
-.lore .yr { font: 600 .66rem var(--caps); letter-spacing: .24em; color: var(--gold); display: block; margin-top: 1.1rem; }
-.lore b { font: 600 .95rem var(--caps); letter-spacing: .12em; display: block; margin: .3rem 0; }
-.lore p { font: 400 1.02rem/1.35 var(--hand); color: var(--pen); margin: 0; }
-.lore .now b, .lore .now .yr { color: var(--red); }
-@media (max-width: 860px) { .lore { grid-auto-columns: 72%; } }
-
 /* ------------------------------------------------------------------ the maquette (3D turntable) */
 .maquette { position: relative; margin-top: 2rem; aspect-ratio: 16 / 9; min-height: 420px; overflow: hidden; border-radius: 3px;
   background: radial-gradient(ellipse at 50% 40%, #f6efe1 0%, #e6dac4 55%, #cdbd9f 100%);
@@ -461,9 +453,12 @@ html:not(.js) .echo-nav, html:not(.js) .echo-hint { display: none; }
 .endcard .up { display: inline-block; margin-top: 2.4rem; font: 400 1.15rem var(--hand); color: #f2c98a; text-decoration: none; }
 
 /* sound */
-.sound { position: fixed; left: 18px; top: 22px; z-index: 40; font-size: .95rem; color: var(--bone); border-color: currentColor;
-  background: none; mix-blend-mode: difference; display: flex; align-items: center; gap: .45rem; padding: .2rem .8rem; }
-.sound svg { width: 26px; height: 14px; }
+.sound { position: fixed; right: 18px; bottom: 18px; z-index: 40; width: 46px; height: 46px; padding: 0; border-radius: 50%;
+  display: grid; place-items: center; color: var(--ink); border: 1.5px solid currentColor; background: rgba(236,227,210,.55); transition: color .4s, background .4s; }
+body.bottom-dark .sound { background: rgba(20,15,10,.35); }
+.swatch { cursor: pointer; }
+.sound svg { width: 24px; height: 14px; }
+.sound:not(.on)::after { content: ""; position: absolute; width: 30px; height: 1.5px; background: currentColor; transform: rotate(-35deg); }
 .sound path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
 .sound.on path { animation: swell 2.4s ease-in-out infinite; }
 @keyframes swell { 50% { transform: translateY(-2px); } }
@@ -471,3 +466,16 @@ html:not(.js) .echo-nav, html:not(.js) .echo-hint { display: none; }
 /* mood-board sketches standing in for the found images */
 .photo svg.refsketch { display: block; width: 100%; height: auto; aspect-ratio: 300 / 380; background: #f3ecdd; }
 .photo svg.refsketch.wide { aspect-ratio: 400 / 240; }
+
+/* ------------------------------------------------------------------ the legend, in six pictures */
+.legend { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2.2rem 2rem; margin-top: 2rem; }
+.legend > div { position: relative; }
+.legend svg { width: 100%; height: auto; display: block; background: rgba(255,255,255,.28); border: 1px solid rgba(43,36,30,.12); }
+.legend b { position: absolute; left: .5rem; top: .2rem; font: 400 1.6rem var(--caps); color: var(--gold); }
+.legend p { font: 500 1.22rem/1.35 var(--serif); margin: .7rem 0 0; }
+.legend .now p { color: var(--red); }
+@media (max-width: 860px) { .legend { grid-template-columns: 1fr 1fr; gap: 1.4rem 1rem; } .legend p { font-size: 1.05rem; } }
+
+/* the mirage door */
+.door-page .stencil.sk { font: 400 clamp(3rem, 9vw, 7rem)/1.1 var(--sanskrit); letter-spacing: 0; color: #ffe2b0; }
+.door-page .mirage-en { font: 600 .8rem var(--caps); letter-spacing: .5em; color: #f0cf91; margin: .3rem 0 1.2rem; text-transform: uppercase; }
