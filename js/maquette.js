@@ -18,14 +18,14 @@ if (host) {
 
 // [x, y, z] in metres from the door's foot (the Ring faces +z), the side it faces, and a note
 const SPOTS = [
-  { p: [0, 62, 7], n: [0, 0, 1], t: 'the Lock', d: 'eight petals. a lotus that grew up inside a rose window. everything turns around it, nobody touches it.' },
-  { p: [-30, 88, 6], n: [0, 0, 1], t: '30 spokes', d: 'one per tithi, a lunar day. I counted them twice.' },
-  { p: [-64, 92, 6], n: [0, 0, 1], t: '4 bands of knots', d: 'the four ages. Krita at the centre, Kali at the rim. the ivy is on Kali.' },
-  { p: [0, 30, 7], n: [0, 0, 1], t: 'the door', d: '23 × 51 m. न प्रवेशः over it. lit from the other side, sometimes.' },
-  { p: [0, 168, 0], n: [0, 1, 0.4], t: 'crown + spire', d: 'the tip is 317 m above the sea. it’s the first thing the sun touches.' },
-  { p: [84, 66, 0], n: [1, 0, 0.3], t: 'thorns of light', d: 'not in one plane. they tilt in and out, like a crown that doesn’t quite fit.' },
-  { p: [52, 3, 8], n: [0.3, 0.2, 1], t: 'the feet', d: 'the Ring goes sixteen metres into the rock. Karna’s wheel, a little.' },
-  { p: [0, 62, -7], n: [0, 0, -1], t: 'the back', d: 'nobody sees the back. it’s carved anyway. the Wardens would know.' },
+  { p: [0, 62, 7], n: [0, 0, 1], t: 'the lotus', d: 'eight petals. everything turns around it, and nobody touches it.' },
+  { p: [-30, 88, 6], n: [0, 0, 1], t: '30 spokes', d: 'one for each day of the moon. I counted them twice.' },
+  { p: [-64, 92, 6], n: [0, 0, 1], t: '4 rings of knots', d: 'the four ages of the world. the ivy has reached the last one.' },
+  { p: [0, 30, 7], n: [0, 0, 1], t: 'the door', d: '23 m wide, 51 m tall. it looks empty. it isn\u2019t.' },
+  { p: [0, 168, 0], n: [0, 1, 0.4], t: 'the spire', d: 'the tip is 317 m above the sea. the sun touches it first.' },
+  { p: [84, 66, 0], n: [1, 0, 0.3], t: 'thorns', d: 'they don\u2019t line up, like a crown that doesn\u2019t quite fit.' },
+  { p: [52, 3, 8], n: [0.3, 0.2, 1], t: 'the feet', d: 'the Ring sinks 16 m into the rock, as if the mountain is slowly swallowing it.' },
+  { p: [0, 62, -7], n: [0, 0, -1], t: 'the back', d: 'nobody sees the back. I carved it anyway.' },
 ];
 
 function start() {
@@ -40,11 +40,13 @@ function start() {
     return;
   }
   const small = matchMedia('(max-width: 700px)').matches;
-  renderer.setPixelRatio(Math.min(devicePixelRatio, small ? 1.25 : 1.75));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, small ? 1 : 1.5));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.shadowMap.autoUpdate = false;            // the model and the light never move, only the camera
+  renderer.shadowMap.needsUpdate = true;
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(30, 1, 5, 5000);
@@ -184,6 +186,7 @@ function start() {
       o.customDepthMaterial = (m === 'wild' && o.material.alphaTest) ? new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: o.material.map, alphaTest: 0.45 }) : undefined;
     }
     desk.material.opacity = 0.18;
+    renderer.shadowMap.needsUpdate = true;
     host.querySelectorAll('.modes button').forEach((b) => b.classList.toggle('on', b.dataset.mode === m));
     dirty = 3;
   }
