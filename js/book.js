@@ -25,29 +25,88 @@ function text(svg, x, y, str, { size = 16, color = PEN, anchor = 'middle', rot =
 }
 function add(svg, node) { svg.appendChild(node); return node; }
 
-// draw-on animation for every rough path inside an element
+// draw-on animation for every rough path inside an element. it replays every time you scroll back.
 function prepDraw(root) {
   for (const p of root.querySelectorAll('path')) {
+    if (p.dataset.len) continue;
     let len = 0;
     try { len = p.getTotalLength(); } catch { len = 0; }
     if (!len || p.getAttribute('fill') && p.getAttribute('fill') !== 'none' && !p.getAttribute('stroke')) continue;
-    p.style.strokeDasharray = `${len} ${len}`;
-    p.style.strokeDashoffset = len;
-    p.style.transition = `stroke-dashoffset ${Math.min(2.2, 0.5 + len / 600)}s cubic-bezier(.5,.1,.3,1) ${Math.random() * 0.35}s`;
+    p.dataset.len = len.toFixed(1);
+    p.dataset.tr = `stroke-dashoffset ${Math.min(2.2, 0.5 + len / 600).toFixed(2)}s cubic-bezier(.5,.1,.3,1) ${(Math.random() * 0.35).toFixed(2)}s`;
+    p.style.strokeDasharray = `${p.dataset.len} ${p.dataset.len}`;
+    p.style.strokeDashoffset = p.dataset.len;
   }
 }
-function playDraw(root) { for (const p of root.querySelectorAll('path')) p.style.strokeDashoffset = 0; }
+function playDraw(root) {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    for (const p of root.querySelectorAll('path[data-len]')) { p.style.transition = p.dataset.tr; p.style.strokeDashoffset = 0; }
+  }));
+}
+function resetDraw(root) {
+  for (const p of root.querySelectorAll('path[data-len]')) { p.style.transition = 'none'; p.style.strokeDashoffset = p.dataset.len; }
+}
 
-// ------------------------------------------------------------------ reveal on scroll
+// ------------------------------------------------------------------ reveal on scroll: in = play, out = rewind, so it plays again
+const onShow = new WeakMap(), onHide = new WeakMap();
 const io = new IntersectionObserver((entries) => {
   for (const e of entries) {
-    if (!e.isIntersecting) continue;
-    e.target.classList.add('seen');
-    playDraw(e.target);
-    io.unobserve(e.target);
+    const el = e.target;
+    if (e.isIntersecting) {
+      if (el.classList.contains('seen')) continue;
+      el.classList.add('seen');
+      playDraw(el);
+      onShow.get(el)?.();
+    } else if (el.classList.contains('seen')) {
+      el.classList.remove('seen');
+      resetDraw(el);
+      onHide.get(el)?.();
+    }
   }
-}, { threshold: 0.18 });
-const observe = (el) => io.observe(el);
+}, { threshold: 0.12 });
+function observe(el, show, hide) {
+  if (show) onShow.set(el, show);
+  if (hide) onHide.set(el, hide);
+  io.observe(el);
+}
+// drawings are built just before they scroll into view, not all at page load
+const builders = new Map();
+const lazyIO = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    if (!e.isIntersecting) continue;
+    const build = builders.get(e.target);
+    builders.delete(e.target);
+    lazyIO.unobserve(e.target);
+    build?.();
+  }
+}, { rootMargin: '900px 0px' });
+const queue = [];
+function lazy(el, build) { builders.set(el, build); queue.push(el); lazyIO.observe(el); }
+// and in quiet moments (never mid-scroll) the rest get built ahead of time, one small piece at a time
+let lastScrollT = 0;
+addEventListener('scroll', () => { lastScrollT = performance.now(); }, { passive: true });
+const whenIdle = window.requestIdleCallback ? (cb) => requestIdleCallback(cb) : (cb) => setTimeout(() => cb({ timeRemaining: () => 10 }), 150);
+function pump(deadline) {
+  if (performance.now() - lastScrollT > 400) {
+    while (queue.length && deadline.timeRemaining() > 6) {
+      const el = queue.shift(), build = builders.get(el);
+      if (!build) continue;
+      builders.delete(el);
+      lazyIO.unobserve(el);
+      build();
+    }
+  }
+  if (queue.length) whenIdle(pump);
+}
+const startPump = () => setTimeout(() => whenIdle(pump), 1200);
+if (document.readyState === 'complete') startPump(); else addEventListener('load', startPump, { once: true });
+// after building: prepare the strokes, and play at once if the thing is already on screen
+function ready(svg, target = svg) {
+  prepDraw(svg);
+  if (target.classList.contains('seen')) playDraw(svg);
+  observe(target);
+}
+const hash = (str) => [...str].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 99991, 7);
 
 // ------------------------------------------------------------------ shapes I tried (chapter II)
 function skyline(svg, rc, { towers = true } = {}) {
@@ -103,13 +162,13 @@ const SHAPES = {
     add(svg, rc.ellipse(110, 92, 200, 160, opt({ stroke: RED, strokeWidth: 2, roughness: 2.2 })));
   },
 };
-for (const svg of $$('svg[data-shape]')) {
+for (const svg of $$('svg[data-shape]')) lazy(svg, () => {
+  seed = hash(svg.dataset.shape);
   const rc = rough.svg(svg);
   skyline(svg, rc);
   SHAPES[svg.dataset.shape]?.(svg, rc);
-  prepDraw(svg);
-  observe(svg.closest('.shape-card') || svg);
-}
+  ready(svg, svg.closest('.shape-card') || svg);
+});
 
 // ------------------------------------------------------------------ the mood board, sketched (the originals aren't mine to reprint)
 const REF = {
@@ -181,12 +240,11 @@ const REF = {
     for (const x of [14, 30, 200, 214, 228, 350]) add(svg, rc.curve([[x, 214], [x - 4, 196], [x + 6, 184]], opt({ stroke: MOSS, strokeWidth: 1.6 })));
   },
 };
-for (const svg of $$('svg[data-ref]')) {
-  seed = 300 + svg.dataset.ref.length * 11;
+for (const svg of $$('svg[data-ref]')) lazy(svg, () => {
+  seed = 300 + hash(svg.dataset.ref);
   REF[svg.dataset.ref]?.(svg, rough.svg(svg));
-  prepDraw(svg);
-  observe(svg.closest('figure') || svg);
-}
+  ready(svg, svg.closest('figure') || svg);
+});
 
 // ------------------------------------------------------------------ diagrams
 const DIAGRAMS = {
@@ -206,7 +264,7 @@ const DIAGRAMS = {
     add(svg, rc.curve([[420, 40], [380, 30], [338, 60], [322, 76]], opt({ stroke: RED, strokeWidth: 1.8 })));
     add(svg, rc.line(322, 76, 334, 72, opt({ stroke: RED, strokeWidth: 1.8 })));
     add(svg, rc.line(322, 76, 326, 64, opt({ stroke: RED, strokeWidth: 1.8 })));
-    text(svg, 432, 34, 'your eye goes here', { color: RED, anchor: 'start', size: 17, rot: -3 });
+    text(svg, 512, 30, 'your eye goes here', { color: RED, anchor: 'end', size: 17, rot: -3 });
   },
   time(svg, rc) {
     const cx = [52, 156, 260, 364, 468], cy = 82, r = 42;
@@ -330,40 +388,17 @@ const DIAGRAMS = {
     text(svg, 440, 238, '4 · patches,', { size: 16, anchor: 'end', color: RED, rot: -4 });
     text(svg, 440, 256, 'never a coat', { size: 16, anchor: 'end', color: RED, rot: -4 });
   },
-  pipeline(svg, rc) {
-    const boxes = [
-      [10, 'four references', '(the phone)'], [180, 'build_world.py', 'Blender + Python'], [370, 'make_textures.py', 'baked materials'],
-      [560, 'FBX + layout.json', 'meshes, cameras, sun'], [750, 'build_level.py', 'Unreal Engine 5'], [940, 'render_shots.py', 'Movie Render Queue'],
-    ];
-    boxes.forEach(([x, a, b], i) => {
-      const y = i === 2 ? 168 : 70;
-      add(svg, rc.rectangle(x, y, 160, 92, opt({ strokeWidth: 2, fill: i === 0 ? 'rgba(241,224,138,.6)' : 'rgba(255,255,255,.35)', fillStyle: 'solid' })));
-      text(svg, x + 80, y + 40, a, { size: 17, color: INK, weight: 700 });
-      text(svg, x + 80, y + 64, b, { size: 15, color: PENCIL });
-    });
-    arrow(svg, rc, 172, 116, 180, 116);
-    arrow(svg, rc, 340, 130, 380, 172);
-    arrow(svg, rc, 340, 108, 560, 108);
-    arrow(svg, rc, 530, 200, 572, 166);
-    arrow(svg, rc, 720, 116, 750, 116);
-    arrow(svg, rc, 910, 116, 940, 116);
-    add(svg, rc.rectangle(990, 210, 160, 70, opt({ stroke: RED, strokeWidth: 2.2 })));
-    text(svg, 1070, 252, 'this book', { size: 22, color: RED, font: 'Caveat', weight: 600 });
-    arrow(svg, rc, 1020, 164, 1050, 210, RED);
-    text(svg, 600, 290, 'change a number → rebuild the whole world', { size: 16, color: PEN, rot: -1 });
-  },
 };
 function arrow(svg, rc, x1, y1, x2, y2, color = INK) {
   add(svg, rc.line(x1, y1, x2, y2, opt({ stroke: color, strokeWidth: 1.8 })));
   const a = Math.atan2(y2 - y1, x2 - x1);
   for (const s of [-1, 1]) add(svg, rc.line(x2, y2, x2 - Math.cos(a + s * 0.45) * 13, y2 - Math.sin(a + s * 0.45) * 13, opt({ stroke: color, strokeWidth: 1.8 })));
 }
-for (const svg of $$('svg[data-diagram]')) {
-  const rc = rough.svg(svg);
-  DIAGRAMS[svg.dataset.diagram]?.(svg, rc);
-  prepDraw(svg);
-  observe(svg);
-}
+for (const svg of $$('svg[data-diagram]')) lazy(svg, () => {        // DIAGRAMS gets more entries further down; looked up at build time
+  seed = hash(svg.dataset.diagram);
+  DIAGRAMS[svg.dataset.diagram]?.(svg, rough.svg(svg));
+  ready(svg);
+});
 
 // ------------------------------------------------------------------ annotated images
 function annotate(fig) {
@@ -406,7 +441,7 @@ function annotate(fig) {
       }
     });
     prepDraw(svg);
-    if (fig.classList.contains('seen')) requestAnimationFrame(() => playDraw(svg));
+    if (fig.classList.contains('seen')) playDraw(svg);
   };
   const go = () => { draw(); observe(fig); };
   img.complete ? go() : img.addEventListener('load', go, { once: true });
@@ -414,7 +449,7 @@ function annotate(fig) {
 }
 $$('[data-annot]').forEach(annotate);
 
-// kit sheets: labels under each building / tree, read from the positions Blender wrote out
+// kit sheets: a label under each building and tree
 async function kitLabels(fig) {
   const names = JSON.parse(fig.dataset.kitNames || '{}');
   let rows = [];
@@ -530,18 +565,24 @@ const ECHO = {
     text(svg, 14, 214, 'new moon at the top, full at the bottom.', { size: 14, color: PENCIL, anchor: 'start' });
   },
   yugas(svg, rc) {
-    const cx = 120, cy = 116, bands = [[26, 'कृत', 'Krita'], [48, 'त्रेता', 'Treta'], [70, 'द्वापर', 'Dvapara'], [92, 'कलि', 'Kali']];
+    // four bands, numbered on the ring itself, with a key on the right: no leader lines to tangle
+    const cx = 112, cy = 112, bands = [[26, 'कृत', 'Krita'], [48, 'त्रेता', 'Treta'], [70, 'द्वापर', 'Dvapara'], [92, 'कलि', 'Kali']];
     bands.forEach(([r, d, en], i) => {
       add(svg, rc.circle(cx, cy, (r + 10) * 2, opt({ strokeWidth: 1.4 })));
       const n = 6 + i * 4;
-      for (let s = 0; s < n; s++) { const a = (s / n) * TAU; add(svg, rc.ellipse(cx + cos(a) * r, cy + sin(a) * r, 10, 10, opt({ strokeWidth: 0.9, roughness: 0.6 }))); }
-      const y = 36 + i * 44;
-      add(svg, rc.line(cx + r * 0.7, cy - r * 0.7 + (i * 6), 268, y - 6, opt({ stroke: PENCIL, strokeWidth: 0.8 })));
-      text(svg, 276, y, d, { size: 24, color: i === 3 ? RED : INK, font: SK, anchor: 'start' });
-      text(svg, 350, y, en, { size: 15, color: PEN, anchor: 'start' });
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * TAU;
+        if (Math.abs(a - Math.PI * 1.5) < 0.42) continue;        // leave room for the number
+        add(svg, rc.ellipse(cx + cos(a) * r, cy + sin(a) * r, 10, 10, opt({ strokeWidth: 0.9, roughness: 0.6 })));
+      }
+      text(svg, cx, cy - r + 5, String(i + 1), { size: 13, color: i === 3 ? RED : INK, font: 'Cinzel', weight: 600 });
+      const y = 44 + i * 40;
+      text(svg, 250, y, String(i + 1), { size: 15, color: GOLD, font: 'Cinzel', weight: 600, anchor: 'start' });
+      text(svg, 272, y + 2, d, { size: 24, color: i === 3 ? RED : INK, font: SK, anchor: 'start' });
+      text(svg, 344, y, en, { size: 15, color: PEN, anchor: 'start' });
     });
-    for (let a = 3.6; a < 5.6; a += 0.22) add(svg, rc.ellipse(cx + cos(a) * 103, cy + sin(a) * 103, 9, 6, opt({ stroke: MOSS, fill: 'rgba(95,122,46,.7)', fillStyle: 'solid', roughness: 0.5 })));
-    text(svg, 6, 14, 'ivy, on the outermost band', { size: 14, color: MOSS, anchor: 'start' });
+    for (let a = 2.35; a < 4.05; a += 0.2) add(svg, rc.ellipse(cx + cos(a) * 103, cy + sin(a) * 103, 9, 6, opt({ stroke: MOSS, fill: 'rgba(95,122,46,.7)', fillStyle: 'solid', roughness: 0.5 })));
+    text(svg, 250, 212, 'ivy: already on Kali', { size: 14, color: MOSS, anchor: 'start' });
   },
   maya(svg, rc) {
     add(svg, rc.line(10, 150, 410, 150, opt({ stroke: PENCIL })));
@@ -609,22 +650,39 @@ const ECHO = {
     text(svg, 330, 60, 'behold', { size: 17, color: PEN, anchor: 'start', rot: -3 });
   },
 };
-for (const svg of $$('svg[data-echo]')) {
-  seed = 100 + svg.dataset.echo.length * 7;
-  ECHO[svg.dataset.echo]?.(svg, rough.svg(svg));
-  prepDraw(svg);
+const echoCards = document.getElementById('echo-cards');
+const cards = $$('.echo');
+let cur = 0;
+const cardSvg = (k) => cards[k]?.querySelector('svg');
+function show(i, focus = false) {
+  const prev = cardSvg(cur);
+  cur = (i + 9) % 9;
+  if (prev && prev !== cardSvg(cur)) resetDraw(prev);
+  cards.forEach((c, k) => c.classList.toggle('on', k === cur));
+  for (const p of $$('#lotus .petal')) { const on = +p.dataset.i === cur; p.classList.toggle('on', on); p.setAttribute('aria-selected', on); }
+  if (echoCards?.classList.contains('seen') && cardSvg(cur)) { resetDraw(cardSvg(cur)); playDraw(cardSvg(cur)); }
+  if (focus) $$('#lotus .petal').find((p) => +p.dataset.i === cur)?.focus();
+}
+if (echoCards) {
+  lazy(echoCards, () => {
+    for (const svg of $$('svg[data-echo]', echoCards)) {
+      seed = 100 + hash(svg.dataset.echo);
+      ECHO[svg.dataset.echo]?.(svg, rough.svg(svg));
+      prepDraw(svg);
+    }
+    observe(echoCards, () => cardSvg(cur) && playDraw(cardSvg(cur)), () => cards.forEach((c) => c.querySelector('svg') && resetDraw(c.querySelector('svg'))));
+  });
+  $$('.echo-nav button').forEach((b) => b.addEventListener('click', () => show(cur + +b.dataset.step)));
 }
 
 // the lotus: eight petals and a hub, each one opens an echo
 const lotus = document.getElementById('lotus');
-if (lotus) {
+if (lotus) lazy(lotus, () => {
   const rc = rough.svg(lotus);
   seed = 808;
   add(lotus, rc.circle(0, 0, 410, opt({ strokeWidth: 2.8 })));
   add(lotus, rc.circle(0, 0, 384, opt({ strokeWidth: 1 })));
   for (let i = 0; i < 30; i++) { const a = (i / 30) * TAU; add(lotus, rc.line(cos(a) * 178, sin(a) * 178, cos(a) * 190, sin(a) * 190, opt({ strokeWidth: 1, roughness: 0.4 }))); }
-  const cards = $$('.echo');
-  const petals = [];
   const PET = 'M 0 -48 C 50 -82, 54 -140, 0 -176 C -54 -140, -50 -82, 0 -48 Z';
   const mk = (i, d, rot, label, draw = true) => {
     const g = document.createElementNS(NS, 'g');
@@ -644,7 +702,6 @@ if (lotus) {
       g.appendChild(p);
     }
     lotus.appendChild(g);
-    petals.push(g);
     return g;
   };
   for (let i = 0; i < 8; i++) {
@@ -654,38 +711,25 @@ if (lotus) {
     inner.setAttribute('transform', `rotate(${rot})`);
     g.appendChild(inner);
     const a = (rot - 90) * Math.PI / 180;
-    const t = text(lotus, cos(a) * 112, sin(a) * 112 + 8, String(i + 1), { size: 24, color: INK, font: 'Cinzel', weight: 600 });
-    g.appendChild(t);
+    g.appendChild(text(lotus, cos(a) * 112, sin(a) * 112 + 8, String(i + 1), { size: 24, color: INK, font: 'Cinzel', weight: 600 }));
   }
   const hub = mk(8, 'M -44 0 A 44 44 0 1 0 44 0 A 44 44 0 1 0 -44 0 Z', 0, 'Sudarshana', false);
   hub.appendChild(rc.circle(0, 0, 88, opt({ stroke: RED, strokeWidth: 2 })));
   hub.appendChild(text(lotus, 0, 7, 'सुदर्शन', { size: 19, color: RED, font: SK }));
-  prepDraw(lotus);
-  observe(lotus);
-  let cur = 0;
-  const show = (i, focus = false) => {
-    cur = (i + 9) % 9;
-    cards.forEach((c, k) => c.classList.toggle('on', k === cur));
-    petals.forEach((p) => { const on = +p.dataset.i === cur; p.classList.toggle('on', on); p.setAttribute('aria-selected', on); });
-    const svg = cards[cur].querySelector('svg');
-    if (svg) requestAnimationFrame(() => requestAnimationFrame(() => playDraw(svg)));
-    if (focus) petals.find((p) => +p.dataset.i === cur)?.focus();
-  };
+  ready(lotus);
   const reveal = () => { if (innerWidth <= 860) cards[cur].scrollIntoView({ behavior: 'smooth', block: 'start' }); };
-  petals.forEach((p) => {
+  for (const p of $$('.petal', lotus)) {
     p.addEventListener('click', () => { show(+p.dataset.i); reveal(); });
     p.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); show(+p.dataset.i); }
       if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); show(cur + 1, true); }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); show(cur - 1, true); }
     });
-  });
-  $$('.echo-nav button').forEach((b) => b.addEventListener('click', () => show(cur + +b.dataset.step)));
-  new IntersectionObserver(([e], o) => { if (e.isIntersecting) { show(cur); o.disconnect(); } }, { threshold: 0.3 }).observe(document.getElementById('echo-cards'));
-  show(0);
-}
+  }
+  show(cur);
+});
 
-// ------------------------------------------------------------------ more diagrams: no exit / no entry, and scale
+// ------------------------------------------------------------------ more diagrams: the two traps, and scale
 Object.assign(DIAGRAMS, {
   vyuha(svg, rc) { seed = 13; drawVyuha(svg, rc, 250, 236, 1); },
   valaya(svg, rc) {
@@ -703,7 +747,11 @@ Object.assign(DIAGRAMS, {
     const dw = 23 * k / 2, dh = 51 * k;
     add(svg, rc.rectangle(cx - dw, g - dh, dw * 2, dh, opt({ strokeWidth: 2, fill: 'rgba(255,214,140,.55)', fillStyle: 'solid' })));
     add(svg, rc.line(0, g, 500, g, opt({ strokeWidth: 1.6 })));
-    text(svg, cx, g - dh - 10, 'न प्रवेशः', { size: 20, color: RED, font: SK });
+    add(svg, rc.line(cx + dw + 4, g - dh + 18, 418, 282, opt({ stroke: RED, strokeWidth: 1 })));
+    text(svg, 422, 290, 'मृगतृष्णा', { size: 20, color: RED, font: SK, anchor: 'start' });
+    // what it shows you: home
+    const hx = cx, hy = g - dh * 0.32;
+    add(svg, rc.polygon([[hx - 13, hy], [hx - 13, hy - 16], [hx, hy - 28], [hx + 13, hy - 16], [hx + 13, hy]], opt({ stroke: GOLD, strokeWidth: 1.4, fill: 'rgba(184,138,62,.35)', fillStyle: 'hachure', hachureGap: 3 })));
     // the walker: in through the door, round the back, out a step from the start
     const fig = (x, y, s = 1, dashed = false) => {
       const o = { stroke: dashed ? PENCIL : INK, strokeWidth: 1.6, ...(dashed ? { strokeLineDash: [3, 3] } : {}) };
@@ -722,11 +770,11 @@ Object.assign(DIAGRAMS, {
       opt({ stroke: RED, strokeWidth: 1.6, strokeLineDash: [7, 7], roughness: 0.6 })));
     fig(100, g, 1, true);
     add(svg, rc.ellipse(cx + 2, g + 4, 34, 7, opt({ stroke: 'none', fill: 'rgba(43,36,30,.75)', fillStyle: 'solid' })));
-    text(svg, cx + 4, g + 34, '↑ your shadow. it stays.', { size: 16, color: INK, rot: -2 });
-    text(svg, 22, g + 70, 'you, a step from where you began —', { anchor: 'start', size: 15, color: RED, rot: -2 });
-    text(svg, 22, g + 90, 'and some years from when.', { anchor: 'start', size: 15, color: RED, rot: -2 });
+    text(svg, cx + 4, g + 60, '↑ your shadow. it stays.', { size: 16, color: INK, rot: -2 });
+    text(svg, 22, g + 98, 'you walk back out,', { anchor: 'start', size: 15, color: RED, rot: -2 });
+    text(svg, 22, g + 118, 'a little lighter than you went in.', { anchor: 'start', size: 15, color: RED, rot: -2 });
     text(svg, 488, 30, 'out: yes', { anchor: 'end', size: 18, color: PEN, rot: 3 });
-    text(svg, 488, 52, 'but when?', { anchor: 'end', size: 18, color: RED, rot: 3 });
+    text(svg, 488, 52, 'shadow: no', { anchor: 'end', size: 18, color: RED, rot: 3 });
   },
   scale(svg, rc) {
     seed = 77;
@@ -791,18 +839,15 @@ Object.assign(DIAGRAMS, {
     text(svg, rx - R - 16, tip + 4, 'Kaalavalaya', { size: 21, color: INK, anchor: 'end', font: 'Caveat', weight: 600 });
   },
 });
-for (const name of ['vyuha', 'valaya', 'scale']) for (const svg of $$(`svg[data-diagram="${name}"]`)) {
-  DIAGRAMS[name](svg, rough.svg(svg));
-  prepDraw(svg);
-  observe(svg);
-}
-
-// ------------------------------------------------------------------ lore line icons
+// ------------------------------------------------------------------ the legend, in six pictures
+const stick = (svg, rc, x, y, o = {}) => {                // a little person, feet at (x, y)
+  add(svg, rc.circle(x, y - 34, 10, opt(o)));
+  add(svg, rc.line(x, y - 29, x, y - 12, opt(o)));
+  add(svg, rc.line(x, y - 12, x - 6, y, opt(o)));
+  add(svg, rc.line(x, y - 12, x + 6, y, opt(o)));
+  add(svg, rc.line(x - 7, y - 24, x + 7, y - 24, opt(o)));
+};
 const ICON = {
-  rivers(svg, rc) {
-    for (const [y, b] of [[30, 1], [56, -1], [82, 1]]) add(svg, rc.curve([[6, y], [50, y - 10 * b], [100, y + 8 * b], [150, y - 6 * b], [184, y]], opt({ stroke: PEN, strokeWidth: 1.6 })));
-    for (const [x, y] of [[40, 44], [120, 68], [160, 40], [76, 92]]) { add(svg, rc.line(x, y, x, y - 8, opt({ strokeWidth: 1 }))); add(svg, rc.circle(x, y - 12, 9, opt({ stroke: MOSS, strokeWidth: 1.2, fill: 'rgba(95,122,46,.5)', fillStyle: 'solid' }))); }
-  },
   wave(svg, rc) {
     add(svg, rc.polygon([[110, 96], [150, 30], [186, 96]], opt({ strokeWidth: 1.4, fill: 'rgba(111,102,92,.15)', fillStyle: 'hachure', hachureGap: 5 })));
     add(svg, rc.path('M 4 96 C 20 60, 50 20, 92 22 C 120 24, 126 50, 106 58 C 92 64, 82 50, 92 44', opt({ stroke: PEN, strokeWidth: 2.2 })));
@@ -818,92 +863,79 @@ const ICON = {
     for (let i = 0; i < 30; i++) { const a = (i / 30) * TAU; add(svg, rc.line(95 + cos(a) * 9, 52 + sin(a) * 9, 95 + cos(a) * 34, 52 + sin(a) * 34, opt({ strokeWidth: 0.6, roughness: 0.3 }))); }
     add(svg, rc.circle(95, 52, 14, opt({ stroke: RED, strokeWidth: 1.4 })));
   },
-  words(svg, rc) {
-    add(svg, rc.rectangle(74, 40, 42, 62, opt({ strokeWidth: 1.6, fill: 'rgba(255,214,140,.5)', fillStyle: 'solid' })));
-    text(svg, 95, 28, 'न प्रवेशः', { size: 24, color: RED, font: SK });
+  lure(svg, rc) {                                          // the door glows with the thing you want: home
+    for (let i = 0; i < 9; i++) { const a = Math.PI + (i / 8) * Math.PI; add(svg, rc.line(118 + cos(a) * 46, 66 + sin(a) * 46, 118 + cos(a) * 56, 66 + sin(a) * 56, opt({ stroke: GOLD, strokeWidth: 1.2 }))); }
+    add(svg, rc.rectangle(96, 26, 44, 74, opt({ strokeWidth: 1.8, fill: 'rgba(255,214,140,.6)', fillStyle: 'solid' })));
+    add(svg, rc.polygon([[106, 84], [106, 66], [118, 54], [130, 66], [130, 84]], opt({ stroke: GOLD, strokeWidth: 1.4, fill: 'rgba(184,138,62,.4)', fillStyle: 'hachure', hachureGap: 3 })));
+    add(svg, rc.line(4, 100, 186, 100, opt({ stroke: PENCIL, strokeWidth: 1 })));
+    stick(svg, rc, 44, 100, { strokeWidth: 1.5 });
+    add(svg, rc.curve([[58, 70], [72, 62], [88, 64]], opt({ stroke: RED, strokeWidth: 1.2 })));
   },
-  steps(svg, rc) {
-    add(svg, rc.rectangle(140, 22, 36, 76, opt({ strokeWidth: 1.6 })));
-    for (let i = 0; i < 6; i++) add(svg, rc.ellipse(14 + i * 21, 86 - (i % 2) * 12, 12, 6, opt({ stroke: INK, fill: INK, fillStyle: 'solid', roughness: 0.4 })));
-    text(svg, 120, 20, 'no shadow?', { size: 14, color: RED, rot: -4 });
-  },
-  seal(svg, rc) {
-    add(svg, rc.circle(95, 52, 92, opt({ stroke: RED, strokeWidth: 2.4, fill: 'rgba(166,58,43,.22)', fillStyle: 'hachure', hachureGap: 5 })));
-    add(svg, rc.rectangle(66, 44, 58, 16, opt({ stroke: RED, strokeWidth: 1.6, fill: '#efe6d4', fillStyle: 'solid' })));
-    text(svg, 162, 98, 'their seal', { size: 13, color: PENCIL, anchor: 'end' });
+  shadow(svg, rc) {                                        // you walk out; your shadow stays by the door
+    add(svg, rc.rectangle(130, 26, 40, 74, opt({ strokeWidth: 1.8, fill: 'rgba(255,214,140,.35)', fillStyle: 'solid' })));
+    add(svg, rc.line(4, 100, 186, 100, opt({ stroke: PENCIL, strokeWidth: 1 })));
+    add(svg, rc.ellipse(150, 103, 40, 7, opt({ stroke: 'none', fill: 'rgba(43,36,30,.8)', fillStyle: 'solid' })));
+    stick(svg, rc, 52, 100, { strokeWidth: 1.5 });
+    add(svg, rc.ellipse(66, 104, 34, 7, opt({ stroke: PENCIL, strokeWidth: 0.9, roughness: 0.6, strokeLineDash: [3, 4] })));
+    text(svg, 66, 120, 'no shadow', { size: 12, color: RED });
   },
   eclipse(svg, rc) {
     for (let i = 0; i < 20; i++) { const a = (i / 20) * TAU; add(svg, rc.line(95 + cos(a) * 34, 52 + sin(a) * 34, 95 + cos(a) * (46 + (i % 2) * 8), 52 + sin(a) * (46 + (i % 2) * 8), opt({ stroke: GOLD, strokeWidth: 1.3 }))); }
     add(svg, rc.circle(95, 52, 62, opt({ stroke: INK, strokeWidth: 1.6, fill: INK, fillStyle: 'solid' })));
-  },
-  ivy(svg, rc) {
-    add(svg, rc.arc(95, 96, 170, 170, Math.PI, TAU, false, opt({ strokeWidth: 2.4 })));
-    add(svg, rc.circle(95, 96, 22, opt({ stroke: RED, strokeWidth: 1.4 })));
-    for (let a = Math.PI + 0.15; a < TAU - 0.2; a += 0.22) add(svg, rc.ellipse(95 + cos(a) * 85, 96 + sin(a) * 85, 9, 7, opt({ stroke: MOSS, fill: 'rgba(95,122,46,.75)', fillStyle: 'solid', roughness: 0.5 })));
-    add(svg, rc.curve([[30, 60], [52, 80], [70, 86], [84, 92]], opt({ stroke: MOSS, strokeWidth: 1.6 })));
+    add(svg, rc.circle(95, 52, 92, opt({ stroke: INK, strokeWidth: 2.2 })));
   },
 };
-for (const svg of $$('svg[data-icon]')) {
-  seed = 500 + svg.dataset.icon.length * 13;
+for (const svg of $$('svg[data-icon]')) lazy(svg, () => {
+  seed = 500 + hash(svg.dataset.icon);
   ICON[svg.dataset.icon]?.(svg, rough.svg(svg));
-  prepDraw(svg);
-  observe(svg.parentElement);
-}
+  ready(svg, svg.parentElement);
+});
 
-for (const lore of $$('.lore')) {
-  const edge = () => lore.classList.toggle('end', lore.scrollLeft + lore.clientWidth >= lore.scrollWidth - 6);
-  lore.addEventListener('scroll', edge, { passive: true });
-  edge();
-  let down = null;
-  lore.addEventListener('pointerdown', (e) => { if (e.pointerType === 'mouse') down = { x: e.clientX, s: lore.scrollLeft }; });
-  addEventListener('pointermove', (e) => { if (down) { lore.scrollLeft = down.s - (e.clientX - down.x); lore.style.scrollSnapType = 'none'; } });
-  addEventListener('pointerup', () => { if (down) { down = null; lore.style.scrollSnapType = ''; } });
-}
-
-// ------------------------------------------------------------------ lens: the stone under the pencil
+// ------------------------------------------------------------------ lens: the stone under the pencil (moves only when you do)
 const lensEl = document.getElementById('lens');
 if (lensEl) {
-  let hover = false, visible = false, t0 = performance.now();
   const size = () => lensEl.style.setProperty('--lr', `${Math.round(lensEl.clientWidth * 0.17)}px`);
-  const put = (x, y) => { lensEl.style.setProperty('--lx', `${x}px`); lensEl.style.setProperty('--ly', `${y}px`); };
-  lensEl.addEventListener('pointermove', (e) => { hover = true; const r = lensEl.getBoundingClientRect(); put(e.clientX - r.left, e.clientY - r.top); });
-  lensEl.addEventListener('pointerleave', () => { hover = false; });
-  const idle = () => {
-    if (!visible) return;
-    requestAnimationFrame(idle);
-    if (hover) return;
-    const t = (performance.now() - t0) / 1000, w = lensEl.clientWidth, h = lensEl.clientHeight;
-    put(w * (0.5 + 0.17 * sin(t * 0.37)), h * (0.4 + 0.11 * sin(t * 0.53 + 1)));
+  let raf = 0, px = 0, py = 0;
+  const move = (e) => {
+    const r = lensEl.getBoundingClientRect();
+    px = e.clientX - r.left; py = e.clientY - r.top;
+    if (!raf) raf = requestAnimationFrame(() => { raf = 0; lensEl.style.setProperty('--lx', `${px}px`); lensEl.style.setProperty('--ly', `${py}px`); });
   };
-  new IntersectionObserver(([e]) => { const was = visible; visible = e.isIntersecting; if (visible && !was) idle(); }).observe(lensEl);
+  lensEl.addEventListener('pointermove', move, { passive: true });
+  lensEl.addEventListener('pointerdown', move, { passive: true });
   size();
   addEventListener('resize', debounce(size, 150));
 }
 
-// ------------------------------------------------------------------ the ledger counts itself
+// ------------------------------------------------------------------ the ledger counts up, every time
 const ledger = document.querySelector('.ledger');
 if (ledger) {
   const nums = $$('[data-count]', ledger).map((el) => ({ el, n: +el.dataset.count, pre: el.dataset.pre || '', unit: el.querySelector('small')?.outerHTML || '' }));
-  new IntersectionObserver(([e], o) => {
-    if (!e.isIntersecting) return;
-    o.disconnect();
-    const t0 = performance.now();
+  let run = 0;
+  const paint = (q) => { for (const { el, n, pre, unit } of nums) el.innerHTML = pre + Math.round(n * q).toLocaleString('en-US') + unit; };
+  observe(ledger, () => {
+    const id = ++run, t0 = performance.now();
     const step = () => {
-      const f = Math.min(1, (performance.now() - t0) / 1800), q = 1 - Math.pow(1 - f, 3);
-      for (const { el, n, pre, unit } of nums) el.innerHTML = pre + Math.round(n * q).toLocaleString('en-US') + unit;
+      if (id !== run) return;
+      const f = Math.min(1, (performance.now() - t0) / 1800);
+      paint(1 - Math.pow(1 - f, 3));
       if (f < 1) requestAnimationFrame(step);
     };
     step();
-  }, { threshold: 0.25 }).observe(ledger);
+  }, () => { run++; paint(0); });
 }
 
-// ------------------------------------------------------------------ the shloka arrives word by word; signatures write themselves
+// ------------------------------------------------------------------ the shloka arrives word by word; signatures write themselves (every time)
 $$('.shloka').forEach((sh) => { $$('.w', sh).forEach((w, i) => { w.style.transitionDelay = `${0.2 + i * 0.22}s`; }); observe(sh); });
-$$('.sig').forEach((s) => { if (s.id !== 'title-sig') observe(s); s.addEventListener('animationend', () => s.classList.add('written')); });
+const unwrite = (sig) => () => sig.classList.remove('written');
+for (const sig of $$('.sig')) {
+  sig.addEventListener('animationend', () => sig.classList.add('written'));
+  if (sig.id !== 'title-sig') observe(sig, null, unwrite(sig));
+}
 const titleSig = document.getElementById('title-sig');
 const loaderEl2 = document.getElementById('loader');
 if (titleSig) {
-  const go = () => titleSig.classList.add('seen');
+  const go = () => observe(titleSig, null, unwrite(titleSig));
   if (!loaderEl2 || loaderEl2.classList.contains('done')) setTimeout(go, 600);
   else new MutationObserver((_, o) => { if (loaderEl2.classList.contains('done')) { o.disconnect(); setTimeout(go, 700); } }).observe(loaderEl2, { attributes: true });
 }
@@ -927,7 +959,7 @@ if (soundBtn) {
       src.connect(f); f.connect(g); g.connect(master); src.start(); lfo.start();
     };
     layer(420, 'lowpass', 0.55, 0.085, 0.4);       // the swell
-    layer(1600, 'bandpass', 0.05, 0.085, 0.045);   // the wash on the shingle
+    layer(1600, 'bandpass', 0.05, 0.085, 0.045);   // the wash on the stones
     layer(5200, 'highpass', 0.012, 0.06, 0.01);    // spray
   };
   soundBtn.addEventListener('click', () => {
@@ -937,7 +969,7 @@ if (soundBtn) {
     master.gain.setTargetAtTime(on ? 0.5 : 0, ac.currentTime, 0.9);
     soundBtn.classList.toggle('on', on);
     soundBtn.setAttribute('aria-pressed', on);
-    soundBtn.querySelector('span').textContent = on ? 'sea: on' : 'sea: off';
+    soundBtn.setAttribute('aria-label', on ? 'Sea sound: on' : 'Sea sound: off');
   });
 }
 
@@ -948,18 +980,20 @@ const swHost = document.getElementById('swatches');
 if (swHost) {
   SW.forEach(([k, label], i) => {
     const f = document.createElement('figure');
-    f.className = 'c3 photo reveal zoom';
+    f.className = 'c3 photo reveal swatch';
     f.style.setProperty('--r', `${((i * 37) % 5) - 2}deg`);
-    f.innerHTML = `<img src="assets/art/swatch_${k}.jpg" alt="${label} texture" loading="lazy"><span class="caption">${label}</span>`;
+    f.innerHTML = `<img src="assets/art/swatch_${k}.jpg" alt="${label} texture" loading="lazy" decoding="async" width="420" height="420"><span class="caption">${label}</span>`;
     const n = new Image();
     n.src = `assets/art/swatch_${k}_normal.jpg`;
-    f.addEventListener('mouseenter', () => { f.querySelector('img').src = n.src; });
-    f.addEventListener('mouseleave', () => { f.querySelector('img').src = `assets/art/swatch_${k}.jpg`; });
+    const flip = (bumps) => { f.querySelector('img').src = bumps ? n.src : `assets/art/swatch_${k}.jpg`; f.classList.toggle('bumps', bumps); };
+    f.addEventListener('mouseenter', () => flip(true));
+    f.addEventListener('mouseleave', () => flip(false));
+    f.addEventListener('click', () => flip(!f.classList.contains('bumps')));
     swHost.appendChild(f);
   });
   const hint = document.createElement('p');
   hint.className = 'c12 note pencil';
-  hint.textContent = 'hover one to see its relief (normal map) — that purple is where the light bends.';
+  hint.textContent = 'hover (or tap) one to see its bumps. the purple is where the light bends.';
   swHost.appendChild(hint);
 }
 
@@ -990,9 +1024,9 @@ document.addEventListener('click', (e) => {
 addEventListener('keydown', (e) => { if (e.key === 'Escape') lb.classList.remove('open'); });
 
 // ------------------------------------------------------------------ reveals, dividers
-$$('.reveal, .divider, .sticky').forEach(observe);
+$$('.reveal, .divider, .sticky, .endcard').forEach((el) => observe(el));
 
-// ------------------------------------------------------------------ ring nav + chapters
+// ------------------------------------------------------------------ ring nav: chapter + light/dark from what's under it, no per-frame layout reads
 const nav = document.getElementById('ringnav');
 const toc = document.getElementById('toc');
 const prog = nav.querySelector('.prog');
@@ -1001,15 +1035,28 @@ const C = 2 * Math.PI * 19;
 prog.style.strokeDasharray = C;
 nav.addEventListener('click', () => toc.classList.toggle('open'));
 toc.addEventListener('click', (e) => { if (e.target.closest('a')) toc.classList.remove('open'); });
+const DARK = '#story, .cover, .divider, .shloka, .fullbleed, .endcard, .gallery';
 const sections = $$('[data-chapter]');
-function onScroll() {
-  const max = document.documentElement.scrollHeight - innerHeight;
-  prog.style.strokeDashoffset = C * (1 - Math.min(1, scrollY / max));
-  let cur = sections[0];
-  for (const s of sections) if (s.getBoundingClientRect().top < innerHeight * 0.4) cur = s;
-  if (label.textContent !== cur.dataset.chapter) label.textContent = cur.dataset.chapter;
-}
-addEventListener('scroll', onScroll, { passive: true });
-onScroll();
+const topBand = new IntersectionObserver((entries) => {
+  for (const e of entries) {
+    if (!e.isIntersecting) continue;
+    const el = e.target;
+    if (label.textContent !== el.dataset.chapter) label.textContent = el.dataset.chapter;
+    document.body.classList.toggle('on-dark', el.matches(DARK));
+  }
+}, { rootMargin: '-30px 0px -94% 0px' });
+const bottomBand = new IntersectionObserver((entries) => {
+  for (const e of entries) if (e.isIntersecting) document.body.classList.toggle('bottom-dark', e.target.matches(DARK));
+}, { rootMargin: '-94% 0px -20px 0px' });
+for (const sec of sections) { topBand.observe(sec); bottomBand.observe(sec); }
+let maxScroll = 1, progRaf = 0;
+const measure = () => { maxScroll = Math.max(1, document.documentElement.scrollHeight - innerHeight); };
+new ResizeObserver(debounce(measure, 100)).observe(document.body);
+measure();
+addEventListener('scroll', () => {
+  if (progRaf) return;
+  progRaf = requestAnimationFrame(() => { progRaf = 0; prog.style.strokeDashoffset = C * (1 - Math.min(1, scrollY / maxScroll)); });
+}, { passive: true });
+document.body.classList.add('on-dark', 'bottom-dark');
 
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
